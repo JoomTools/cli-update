@@ -45,7 +45,7 @@ const CORE_EXTENSION_ID = 700;
 const DS = DIRECTORY_SEPARATOR;
 //error_reporting(E_ALL);
 error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT);
-ini_set('display_errors', 1);
+ini_set('display_errors', 0);
 // Load system defines
 if (file_exists(dirname(__DIR__) . '/defines.php'))
 {
