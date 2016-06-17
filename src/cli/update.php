@@ -38,24 +38,32 @@ if (php_sapi_name() != 'cli')
 {
 	exit(1);
 }
+
 // We are a valid entry point.
 const _JEXEC = 1;
+
 // Define core extension id
 const CORE_EXTENSION_ID = 700;
+
+// Define DS as DIRECTORY_SEPARATOR for old Projects
 const DS = DIRECTORY_SEPARATOR;
+
 //error_reporting(E_ALL);
 error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED & ~E_STRICT);
 ini_set('display_errors', 0);
+
 // Load system defines
 if (file_exists(dirname(__DIR__) . '/defines.php'))
 {
 	require_once dirname(__DIR__) . '/defines.php';
 }
+
 if (!defined('_JDEFINES'))
 {
 	define('JPATH_BASE', dirname(__DIR__));
 	require_once JPATH_BASE . '/includes/defines.php';
 }
+
 if (file_exists(JPATH_LIBRARIES . '/import.legacy.php'))
 {
 	//Load on J3x
@@ -66,9 +74,12 @@ else
 	// Load on J25
 	require_once JPATH_LIBRARIES . '/import.php';
 }
+
 require_once JPATH_LIBRARIES . '/cms.php';
+
 // Load the configuration
 require_once JPATH_CONFIGURATION . '/configuration.php';
+
 // Load the JApplicationCli class
 JLoader::import('joomla.application.cli');
 JLoader::import('joomla.application.component.helper');
@@ -103,55 +114,69 @@ class JoomlaCliUpdate extends JApplicationCli
 	public function doExecute()
 	{
 		$_SERVER['HTTP_HOST'] = 'localhost';
-		$this->app            = JFactory::getApplication('site');
+
+		$this->app = JFactory::getApplication('site');
+
 		if ($this->input->get('sitename', false))
 		{
 			$this->out($this->getSiteInfo());
 
 			return;
 		}
+
 		JModelLegacy::addIncludePath(JPATH_ADMINISTRATOR . '/components/com_installer/models');
 		$this->updater = JModelLegacy::getInstance('Update', 'InstallerModel');
+
 		if ($this->input->get('core', false))
 		{
 			$this->out(json_encode(array('700' => $this->updateCore())));
 
 			return;
 		}
+
 		if ($this->input->get('info', false))
 		{
 			$this->out(json_encode($this->infoInstalledVersions()));
 
 			return;
 		}
+
 		if ($this->input->get('extensions', false))
 		{
 			$this->out(json_encode($this->updateExtensions()));
 
 			return;
 		}
+
 		$extension_id = $this->input->get('extension', false, 'INTEGER');
+
 		if (!empty($extension_id))
 		{
 			$this->out(json_encode($this->updateExtension($extension_id)));
 
 			return;
 		}
+
 		$installPackage = $this->input->get('installpackage', '', 'PATH');
+
 		if (!empty($installPackage))
 		{
 			$this->out(json_encode(array('result' => $this->installExtension($installPackage, 'folder'))));
 
 			return;
 		}
+
 		$installUrl = $this->input->get('installurl', '', 'STRING');
+
 		if (!empty($installUrl))
 		{
 			$this->out(json_encode(array('result' => $this->installExtension($installUrl, 'url'))));
 
 			return;
 		}
+
 		$remove = $this->input->get('remove', '');
+
 		if ($remove != '')
 		{
 			return $this->removeExtension($remove);
@@ -159,52 +184,59 @@ class JoomlaCliUpdate extends JApplicationCli
 	}
 
 	/**
-	 * Remove an extension
+	 * Get the sitename json encoded out of the Joomla config
 	 *
-	 * @param   int $param Extension id
-	 *
-	 * @return  bool
+	 * @return  string  The json encoded result
 	 */
-	protected function removeExtension($param)
+	public function getSiteInfo()
 	{
-		$id        = (int) $param;
-		$result    = true;
-		$installer = JInstaller::getInstance();
-		$row       = JTable::getInstance('extension');
-		$row->load($id);
-		if ($row->type && $row->type != 'language')
-		{
-			$result = $installer->uninstall($row->type, $id);
-		}
+		$info           = new stdClass();
+		$info->sitename = JFactory::getApplication()->getCfg('sitename');
 
-		return $result;
+		return json_encode($info);
 	}
 
 	/**
-	 * Installs an extension (From directory or URL)
+	 * Update Core Joomla
 	 *
-	 * @param   string $path
-	 * @param   string $method
-	 *
-	 * @return  bool
+	 * @return  bool  success
 	 */
-	public function installExtension($path, $method)
+	public function updateCore()
 	{
-		if ($method == 'url')
-		{
-			$path = JInstallerHelper::downloadPackage($path);
-		}
-		$path    = JPATH_BASE . '/tmp/' . basename($path);
-		$package = JInstallerHelper::unpack($path, true);
-		if ($package['type'] === false)
-		{
-			return false;
-		}
-		$jInstaller = JInstaller::getInstance();
-		$result     = $jInstaller->install($package['extractdir']);
-		JInstallerHelper::cleanupInstall($path, $package['extractdir']);
+		JModelLegacy::addIncludePath(JPATH_ADMINISTRATOR . '/components/com_joomlaupdate/models');
+		$jUpdate = JModelLegacy::getInstance('Default', 'JoomlaupdateModel');
 
-		return $result;
+		if (version_compare(JVERSION, "3", 'gt'))
+		{
+			$jUpdate->purge();
+		}
+
+		$jUpdate->refreshUpdates(true);
+		$updateInformation = $jUpdate->getUpdateInformation();
+
+		if (!empty($updateInformation['object']))
+		{
+			$packagefile = JInstallerHelper::downloadPackage($updateInformation['object']->downloadurl->_data);
+			$packagefile = JPATH_BASE . '/tmp/' . basename($packagefile);
+			$package     = JInstallerHelper::unpack($packagefile, true);
+			JFolder::copy($package['extractdir'], JPATH_BASE, '', true, true);
+			$result = $jUpdate->finaliseUpgrade();
+
+			if ($result)
+			{
+				// Remove the xml
+				if (file_exists(JPATH_BASE . '/joomla.xml'))
+				{
+					JFile::delete(JPATH_BASE . '/joomla.xml');
+				}
+
+				JInstallerHelper::cleanupInstall($packagefile, $package['extractdir']);
+
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -217,11 +249,13 @@ class JoomlaCliUpdate extends JApplicationCli
 	{
 		$lang      = JFactory::getLanguage();
 		$langFiles = $this->getLanguageFiles();
+
 		foreach ($langFiles as $file)
 		{
 			$file = str_replace(array('en-GB.', '.ini'), '', $file);
 			$lang->load($file, JPATH_ADMINISTRATOR, 'en-GB', true, false);
 		}
+
 		// Get All extensions
 		$extensions = $this->getAllExtensions();
 		$this->updater->purge();
@@ -229,9 +263,11 @@ class JoomlaCliUpdate extends JApplicationCli
 		$updates  = $this->getUpdates();
 		$toUpdate = array();
 		$upToDate = array();
+
 		foreach ($extensions as &$extension)
 		{
 			$extension['name'] = JText::_($extension['name']);
+
 			if (array_key_exists($extension['extension_id'], $updates))
 			{
 				$tmp                   = $extension;
@@ -264,43 +300,113 @@ class JoomlaCliUpdate extends JApplicationCli
 	}
 
 	/**
-	 * Update Core Joomla
+	 * Get all extensions
 	 *
-	 * @return  bool  success
+	 * @return  array  AssocList with all extensions from #__extensions
 	 */
-	public function updateCore()
+	private function getAllExtensions()
 	{
-		JModelLegacy::addIncludePath(JPATH_ADMINISTRATOR . '/components/com_joomlaupdate/models');
-		$jUpdate = JModelLegacy::getInstance('Default', 'JoomlaupdateModel');
+		$db    = JFactory::getDbo();
+		$query = $db->getQuery(true);
+		$query->select('*')
+			->from('#__extensions')
+			->where('extension_id > 10000')
+			->where('type != "template"');
+		$db->setQuery($query);
 
-		if (version_compare(JVERSION, "3", 'gt'))
+		return $db->loadAssocList('extension_id');
+	}
+
+	/**
+	 * Find updates
+	 *
+	 * @param  int $eid The extension id
+	 *
+	 * @return  void
+	 */
+	private function findUpdates($eid = 0)
+	{
+		$updater = JUpdater::getInstance();
+
+		// Fills potential updates into the table '#__updates for ALL extensions
+		$updater->findUpdates($eid);
+	}
+
+	/**
+	 * Get available updates from #__updates
+	 *
+	 * @return  array  AssocList with available updates
+	 */
+	private function getUpdates()
+	{
+		$db    = JFactory::getDbo();
+		$query = $db->getQuery(true);
+		$query->select('*')
+			->from('#__updates')
+			->where($db->qn('extension_id') . ' <> 0');
+		$db->setQuery($query);
+
+		return $db->loadAssocList('extension_id');
+	}
+
+	/**
+	 * Update Extensions
+	 *
+	 * @return  array  Array with success information for each extension
+	 */
+	public function updateExtensions()
+	{
+		$this->updater->purge();
+		$this->findUpdates();
+
+		// Get the objects
+		$extensions = $this->getUpdateIds();
+		$result     = array();
+
+		foreach ($extensions as $e)
 		{
-			$jUpdate->purge();
+			$this->updater->update([$e->update_id]);
+			$result[$e->extension_id] = $this->updater->getState('result');
 		}
 
-		$jUpdate->refreshUpdates(true);
-		$updateInformation = $jUpdate->getUpdateInformation();
-		if (!empty($updateInformation['object']))
-		{
-			$packagefile = JInstallerHelper::downloadPackage($updateInformation['object']->downloadurl->_data);
-			$packagefile = JPATH_BASE . '/tmp/' . basename($packagefile);
-			$package     = JInstallerHelper::unpack($packagefile, true);
-			JFolder::copy($package['extractdir'], JPATH_BASE, '', true, true);
-			$result = $jUpdate->finaliseUpgrade();
-			if ($result)
-			{
-				// Remove the xml
-				if (file_exists(JPATH_BASE . '/joomla.xml'))
-				{
-					JFile::delete(JPATH_BASE . '/joomla.xml');
-				}
-				JInstallerHelper::cleanupInstall($packagefile, $package['extractdir']);
+		return $result;
+	}
 
-				return true;
-			}
+	/**
+	 * Get the update
+	 *
+	 * @param   int|null $eid The extenion id or null for all
+	 *
+	 * @return  object|array
+	 */
+	private function getUpdateIds($eid = null)
+	{
+		$db    = JFactory::getDbo();
+		$query = $db->getQuery(true);
+		$query->select('update_id, extension_id')
+			->from('#__updates')
+			->where($db->qn('extension_id') . ' <> 0');
+
+		if (!is_null($eid))
+		{
+			$query->where($db->qn('extension_id') . ' = ' . $db->q($eid));
 		}
 
-		return false;
+		$db->setQuery($query);
+		$result = $db->loadObjectList();
+
+		if (!$result)
+		{
+			return array();
+		}
+
+		if ($eid)
+		{
+			// Return only update id
+			return (array) $result[0]->update_id;
+		}
+
+		return $result;
 	}
 
 	/**
@@ -322,119 +428,56 @@ class JoomlaCliUpdate extends JApplicationCli
 	}
 
 	/**
-	 * Update Extensions
+	 * Installs an extension (From directory or URL)
 	 *
-	 * @return  array  Array with success information for each extension
+	 * @param   string $path
+	 * @param   string $method
+	 *
+	 * @return  bool
 	 */
-	public function updateExtensions()
+	public function installExtension($path, $method)
 	{
-		$this->updater->purge();
-		$this->findUpdates();
-		// Get the objects
-		$extensions = $this->getUpdateIds();
-		$result     = array();
-		foreach ($extensions as $e)
+		if ($method == 'url')
 		{
-			$this->updater->update([$e->update_id]);
-			$result[$e->extension_id] = $this->updater->getState('result');
+			$path = JInstallerHelper::downloadPackage($path);
 		}
+
+		$path    = JPATH_BASE . '/tmp/' . basename($path);
+		$package = JInstallerHelper::unpack($path, true);
+
+		if ($package['type'] === false)
+		{
+			return false;
+		}
+
+		$jInstaller = JInstaller::getInstance();
+		$result     = $jInstaller->install($package['extractdir']);
+		JInstallerHelper::cleanupInstall($path, $package['extractdir']);
 
 		return $result;
 	}
 
 	/**
-	 * Find updates
+	 * Remove an extension
 	 *
-	 * @param  int $eid The extension id
+	 * @param   int $param Extension id
 	 *
-	 * @return  void
+	 * @return  bool
 	 */
-	private function findUpdates($eid = 0)
+	protected function removeExtension($param)
 	{
-		$updater = JUpdater::getInstance();
-		// Fills potential updates into the table '#__updates for ALL extensions
-		$updater->findUpdates($eid);
-	}
+		$id        = (int) $param;
+		$result    = true;
+		$installer = JInstaller::getInstance();
+		$row       = JTable::getInstance('extension');
+		$row->load($id);
 
-	/**
-	 * Get the update
-	 *
-	 * @param   int|null $eid The extenion id or null for all
-	 *
-	 * @return  object|array
-	 */
-	private function getUpdateIds($eid = null)
-	{
-		$db    = JFactory::getDbo();
-		$query = $db->getQuery(true);
-		$query->select('update_id, extension_id')
-			->from('#__updates')
-			->where($db->qn('extension_id') . ' <> 0');
-		if (!is_null($eid))
+		if ($row->type && $row->type != 'language')
 		{
-			$query->where($db->qn('extension_id') . ' = ' . $db->q($eid));
-		}
-		$db->setQuery($query);
-		$result = $db->loadObjectList();
-		if (!$result)
-		{
-			return array();
-		}
-		if ($eid)
-		{
-			// Return only update id
-			return (array) $result[0]->update_id;
+			$result = $installer->uninstall($row->type, $id);
 		}
 
 		return $result;
-	}
-
-	/**
-	 * Get available updates from #__updates
-	 *
-	 * @return  array  AssocList with available updates
-	 */
-	private function getUpdates()
-	{
-		$db    = JFactory::getDbo();
-		$query = $db->getQuery(true);
-		$query->select('*')
-			->from('#__updates')
-			->where($db->qn('extension_id') . ' <> 0');
-		$db->setQuery($query);
-
-		return $db->loadAssocList('extension_id');
-	}
-
-	/**
-	 * Get all extensions
-	 *
-	 * @return  array  AssocList with all extensions from #__extensions
-	 */
-	private function getAllExtensions()
-	{
-		$db    = JFactory::getDbo();
-		$query = $db->getQuery(true);
-		$query->select('*')
-			->from('#__extensions')
-			->where('extension_id > 10000')
-			->where('type != "template"');
-		$db->setQuery($query);
-
-		return $db->loadAssocList('extension_id');
-	}
-
-	/**
-	 * Get the sitename json encoded out of the Joomla config
-	 *
-	 * @return  string  The json encoded result
-	 */
-	public function getSiteInfo()
-	{
-		$info           = new stdClass();
-		$info->sitename = JFactory::getApplication()->getCfg('sitename');
-
-		return json_encode($info);
 	}
 }
 
