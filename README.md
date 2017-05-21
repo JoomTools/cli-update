@@ -1,4 +1,4 @@
-#CLI-Update
+# CLI-Update
 
 Proof of concept on how to update/manage Joomla from the command line 
 
